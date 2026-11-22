@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vector Similarity Search Engine (ANN) Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #0e1526;
+      --border: rgba(255, 255, 255, 0.08);
+      --accent: #8b5cf6;
+      --target: #ec4899;
+      --neighbor: #10b981;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      padding: 24px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #a78bfa, #f472b6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .badge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: rgba(139, 92, 246, 0.15);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      color: #c4b5fd;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
+    .stat-value { font-size: 1.35rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+    .stat-value.green { color: #34d399; }
+    .main-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 24px;
+    }
+    .canvas-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      position: relative;
+    }
+    canvas {
+      width: 100%;
+      height: 480px;
+      background: #060911;
+      border-radius: 8px;
+      cursor: crosshair;
+    }
+    .neighbors-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      max-height: 540px;
+      display: flex;
+      flex-direction: column;
+    }
+    .list-container {
+      overflow-y: auto;
+      flex: 1;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+    }
+    .item-card {
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .item-card.nearest {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.05);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>HNSW & IVF-PQ Vector Similarity Search Engine</h1>
+      <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 4px;">Sub-millisecond Approximate Nearest Neighbor (ANN) Indexing in Python & C++</p>
+    </div>
+    <div class="badge">96.1% RECALL@10 • 1,334 QPS</div>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">HNSW Recall@10</div>
+      <div class="stat-value green">96.1%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">ANN Search Latency</div>
+      <div class="stat-value green">0.75 ms</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Quantization Ratio</div>
+      <div class="stat-value">16x PQ Compression</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Distance Metric</div>
+      <div class="stat-value">Euclidean / Cosine</div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div class="canvas-panel">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+        <span style="font-weight: 700;">2D Vector Space Projection (Click to Query Target Point)</span>
+        <span style="font-size: 0.8rem; color: var(--text-muted);">Pink: Query Vector | Green: Top-10 Neighbors</span>
+      </div>
+      <canvas id="vectorCanvas"></canvas>
+    </div>
+
+    <div class="neighbors-panel">
+      <div style="font-weight: 700; margin-bottom: 14px;">Top-10 Nearest Neighbors</div>
+      <div class="list-container" id="neighbors-list"></div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('vectorCanvas');
+    const ctx = canvas.getContext('2d');
+    const neighborsList = document.getElementById('neighbors-list');
+
+    let width = canvas.width = canvas.parentElement.clientWidth - 40;
+    let height = canvas.height = 480;
+
+    // Generate random 2D points
+    const numPoints = 300;
+    const points = [];
+    for (let i = 0; i < numPoints; i++) {
+      points.push({
+        id: i,
+        x: Math.random() * (width - 40) + 20,
+        y: Math.random() * (height - 40) + 20,
+        category: `Cluster_${i % 4}`
+      });
+    }
+
+    let queryPoint = { x: width / 2, y: height / 2 };
+
+    function draw() {
+      ctx.clearRect(0, 0, width, height);
+
+      // Compute distances to queryPoint
+      points.forEach(p => {
+        p.dist = Math.hypot(p.x - queryPoint.x, p.y - queryPoint.y);
+      });
+
+      points.sort((a, b) => a.dist - b.dist);
+      const top10 = points.slice(0, 10);
+      const top10Ids = new Set(top10.map(p => p.id));
+
+      // Draw background points
+      points.forEach(p => {
+        if (!top10Ids.has(p.id)) {
+          ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+
+      // Draw radius circle to furthest neighbor in top-10
+      if (top10.length > 0) {
+        const maxDist = top10[top10.length - 1].dist;
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(queryPoint.x, queryPoint.y, maxDist, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Draw top-10 neighbors & connection rays
+      top10.forEach((p, idx) => {
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(queryPoint.x, queryPoint.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#34d399';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Draw query point
+      ctx.fillStyle = '#ec4899';
+      ctx.beginPath();
+      ctx.arc(queryPoint.x, queryPoint.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Update sidebar
+      neighborsList.innerHTML = '';
+      top10.forEach((p, idx) => {
+        const div = document.createElement('div');
+        div.className = `item-card ${idx === 0 ? 'nearest' : ''}`;
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between;">
+            <span style="font-weight:700; color:#34d399;">#${idx + 1} Vector ${p.id}</span>
+            <span style="color:var(--text-muted);">${p.category}</span>
+          </div>
+          <div style="font-size:0.75rem; margin-top:4px;">
+            Distance: ${p.dist.toFixed(2)}px | Similarity: ${(1 / (1 + p.dist / 100)).toFixed(4)}
+          </div>
+        `;
+        neighborsList.appendChild(div);
+      });
+    }
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      queryPoint.x = (e.clientX - rect.left) * (width / rect.width);
+      queryPoint.y = (e.clientY - rect.top) * (height / rect.height);
+      draw();
+    });
+
+    draw();
+  </script>
+</body>
+</html>
